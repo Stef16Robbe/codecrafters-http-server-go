@@ -61,12 +61,16 @@ func main() {
 		log.Fatalln("Error reading connection: ", err.Error())
 	}
 
-	idk := strings.Split(string(headers), "\r\n")
-	startLinestr := idk[0]
+	splitted := strings.Split(string(headers), "\r\n")
+	startLinestr := splitted[0]
 	startLine := parseStartline(startLinestr)
 
 	if startLine.Path == "/" {
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	} else if strings.Contains(startLine.Path, "echo") {
+		echo := strings.Split(startLine.Path, "/echo/")[1:][0]
+		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(echo), echo)
+		_, err = conn.Write([]byte(res))
 	} else {
 		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
