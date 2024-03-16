@@ -43,32 +43,23 @@ func parseStartline(data string) StartLine {
 }
 
 func parseUserAgent(data string) string {
+	if len(data) == 0 {
+		return ""
+	}
 	return strings.Split(data, " ")[1]
 }
 
-func main() {
-	fmt.Println("Logs from your program will appear here!")
-
-	l, err := net.Listen("tcp", "0.0.0.0:4221")
-	if err != nil {
-		log.Fatalln("Failed to bind to port 4221")
-	}
-	defer l.Close()
-
-	conn, err := l.Accept()
-	if err != nil {
-		log.Fatalln("Error accepting connection: ", err.Error())
-	}
+func handleRequest(conn net.Conn) {
 	defer conn.Close()
 
 	fmt.Println("new conn from: ", conn.RemoteAddr().String())
 
 	headers := make([]byte, 1024)
 
-	_, err = conn.Read(headers)
+	_, err := conn.Read(headers)
 
 	if err != nil {
-		log.Fatalln("Error reading connection: ", err.Error())
+		fmt.Println("Error reading connection: ", err.Error())
 	}
 
 	var requestHeaders RequestHeaders
@@ -92,4 +83,24 @@ func main() {
 	if err != nil {
 		log.Fatalln("Error responding to connection: ", err.Error())
 	}
+}
+
+func main() {
+	fmt.Println("Logs from your program will appear here!")
+
+	l, err := net.Listen("tcp", "0.0.0.0:4221")
+	if err != nil {
+		log.Fatalln("Failed to bind to port 4221")
+	}
+	defer l.Close()
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			log.Fatalln("Error accepting connection: ", err.Error())
+		}
+
+		go handleRequest(conn)
+	}
+
 }
