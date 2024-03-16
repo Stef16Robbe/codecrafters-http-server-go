@@ -1,18 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
-type RequestHeaders struct {
-	StartLine StartLine
-	Host      string
-	UserAgent string
+type Request struct {
+	StartLine     StartLine
+	Host          string
+	UserAgent     string
+	ContentLength int
+	Body          []byte
 }
 
 type StartLine struct {
@@ -73,6 +78,50 @@ func readFile(dir, filename string) string {
 	return string(content)
 }
 
+func getContentLength(data []string) int {
+	for _, d := range data {
+		if strings.Contains(d, "Content-Length") {
+			i, err := strconv.ParseInt(strings.Split(d, "Content-Length: ")[1], 10, 64)
+			if err != nil {
+				log.Fatalln("err converting content length size!:", err.Error())
+			}
+
+			return int(i)
+		}
+	}
+
+	return 0
+}
+
+func parseBody(data string, size int) []byte {
+	r := strings.NewReader(data)
+	buf := make([]byte, size)
+
+	if _, err := io.ReadFull(r, buf); err != nil {
+		log.Fatalln(err.Error())
+	}
+
+	return buf
+}
+
+func writeFile(data []byte, path string) {
+	data = bytes.Trim(data, "\x00")
+	w, err := os.Create(path)
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+	defer w.Close()
+
+	r := bytes.NewReader(data)
+
+	// do the actual work
+	n, err := io.Copy(w, r)
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+	log.Printf("Copied %v bytes\n", n)
+}
+
 func handleRequest(conn net.Conn, dir string) {
 	defer conn.Close()
 
@@ -86,35 +135,45 @@ func handleRequest(conn net.Conn, dir string) {
 		fmt.Println("Error reading connection: ", err.Error())
 	}
 
-	var requestHeaders RequestHeaders
+	var request Request
 	splitted := strings.Split(string(headers), "\r\n")
-	requestHeaders.StartLine = parseStartline(splitted[0])
-	requestHeaders.UserAgent = parseUserAgent(splitted[2])
+	request.StartLine = parseStartline(splitted[0])
+	request.UserAgent = parseUserAgent(splitted[2])
 
-	if requestHeaders.StartLine.Path == "/" {
+	if request.StartLine.Path == "/" {
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	} else if strings.Contains(requestHeaders.StartLine.Path, "echo") {
-		echo := strings.Split(requestHeaders.StartLine.Path, "/echo/")[1:][0]
+	} else if strings.Contains(request.StartLine.Path, "echo") {
+		echo := strings.Split(request.StartLine.Path, "/echo/")[1:][0]
 		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(echo), echo)
 		_, err = conn.Write([]byte(res))
-	} else if requestHeaders.StartLine.Path == "/user-agent" {
-		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(requestHeaders.UserAgent), requestHeaders.UserAgent)
+	} else if request.StartLine.Path == "/user-agent" {
+		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(request.UserAgent), request.UserAgent)
 		_, err = conn.Write([]byte(res))
-	} else if strings.Contains(requestHeaders.StartLine.Path, "/files/") {
+	} else if strings.Contains(request.StartLine.Path, "/files/") {
 		if dir == "" {
 			log.Fatalf("Give up dir!")
 		}
 		// assuming just file name not a path
-		filename := strings.Split(requestHeaders.StartLine.Path, "/files/")[1]
+		filename := strings.Split(request.StartLine.Path, "/files/")[1]
 		if filename == "" {
 			log.Fatalf("Incorrect filename!")
 		}
-		if checkFileExists(dir, filename) {
-			filecontent := readFile(dir, filename)
-			res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(filecontent), filecontent)
+		if request.StartLine.Method == GET {
+			if checkFileExists(dir, filename) {
+				filecontent := readFile(dir, filename)
+				res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(filecontent), filecontent)
+				_, err = conn.Write([]byte(res))
+			} else {
+				_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+			}
+		} else if request.StartLine.Method == POST {
+			request.ContentLength = getContentLength(splitted)
+			request.Body = parseBody(splitted[len(splitted)-1], request.ContentLength)
+			// save this content to file ...
+			writeFile(request.Body, dir+filename)
+			res := "HTTP/1.1 201 Created\r\n\r\n"
+			fmt.Println(res)
 			_, err = conn.Write([]byte(res))
-		} else {
-			_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 		}
 	} else {
 		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
