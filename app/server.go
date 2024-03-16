@@ -4,35 +4,74 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
+	"strings"
 )
+
+type StartLine struct {
+	Method  Method
+	Path    string
+	Version string
+}
+
+type Method int
+
+const (
+	GET Method = iota
+	POST
+	PUT
+	PATCH
+)
+
+func parseStartline(data string) StartLine {
+	sep := strings.Split(data, " ")
+	method, err := MethodString(sep[0])
+	if err != nil {
+		log.Fatalln("Error parsing HTTP method:", err)
+	}
+
+	return StartLine{
+		Method:  method,
+		Path:    sep[1],
+		Version: sep[2],
+	}
+}
 
 func main() {
 	fmt.Println("Logs from your program will appear here!")
 
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
-		fmt.Println("Failed to bind to port 4221")
-		os.Exit(1)
+		log.Fatalln("Failed to bind to port 4221")
 	}
-	// defer l.Close()
+	defer l.Close()
 
 	conn, err := l.Accept()
 	if err != nil {
 		log.Fatalln("Error accepting connection: ", err.Error())
 	}
+	defer conn.Close()
 
-	fmt.Printf("new conn from: %v\n", conn.RemoteAddr().String())
+	fmt.Println("new conn from: ", conn.RemoteAddr().String())
 
-	_, err = conn.Read([]byte{})
+	headers := make([]byte, 1024)
+
+	_, err = conn.Read(headers)
 
 	if err != nil {
 		log.Fatalln("Error reading connection: ", err.Error())
 	}
 
-	_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	idk := strings.Split(string(headers), "\r\n")
+	startLinestr := idk[0]
+	startLine := parseStartline(startLinestr)
+
+	if startLine.Path == "/" {
+		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	} else {
+		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+	}
 
 	if err != nil {
-		log.Fatalln("Error accepting connection: ", err.Error())
+		log.Fatalln("Error responding to connection: ", err.Error())
 	}
 }
