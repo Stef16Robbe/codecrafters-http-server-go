@@ -1,9 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 )
 
@@ -49,7 +51,29 @@ func parseUserAgent(data string) string {
 	return strings.Split(data, " ")[1]
 }
 
-func handleRequest(conn net.Conn) {
+func checkFileExists(dir, filename string) bool {
+	_, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		return false
+		// log.Fatalln("Folder does not exist.")
+	}
+
+	// assuming dir ends in /
+	_, err = os.Stat(dir + filename)
+	// fmt.Println("exists or not:", os.IsNotExist(err), dir+filename)
+	return !os.IsNotExist(err)
+}
+
+func readFile(dir, filename string) string {
+	content, err := os.ReadFile(dir + filename)
+	if err != nil {
+		log.Fatalln("Err:", err.Error())
+	}
+
+	return string(content)
+}
+
+func handleRequest(conn net.Conn, dir string) {
 	defer conn.Close()
 
 	fmt.Println("new conn from: ", conn.RemoteAddr().String())
@@ -76,6 +100,22 @@ func handleRequest(conn net.Conn) {
 	} else if requestHeaders.StartLine.Path == "/user-agent" {
 		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(requestHeaders.UserAgent), requestHeaders.UserAgent)
 		_, err = conn.Write([]byte(res))
+	} else if strings.Contains(requestHeaders.StartLine.Path, "/files/") {
+		if dir == "" {
+			log.Fatalf("Give up dir!")
+		}
+		// assuming just file name not a path
+		filename := strings.Split(requestHeaders.StartLine.Path, "/files/")[1]
+		if filename == "" {
+			log.Fatalf("Incorrect filename!")
+		}
+		if checkFileExists(dir, filename) {
+			filecontent := readFile(dir, filename)
+			res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(filecontent), filecontent)
+			_, err = conn.Write([]byte(res))
+		} else {
+			_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		}
 	} else {
 		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
@@ -94,13 +134,16 @@ func main() {
 	}
 	defer l.Close()
 
+	dir := flag.String("directory", "", "help message for flag n")
+	flag.Parse()
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			log.Fatalln("Error accepting connection: ", err.Error())
 		}
 
-		go handleRequest(conn)
+		go handleRequest(conn, *dir)
 	}
 
 }
