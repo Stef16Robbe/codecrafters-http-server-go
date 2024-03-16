@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+type RequestHeaders struct {
+	StartLine StartLine
+	Host      string
+	UserAgent string
+}
+
 type StartLine struct {
 	Method  Method
 	Path    string
@@ -36,6 +42,10 @@ func parseStartline(data string) StartLine {
 	}
 }
 
+func parseUserAgent(data string) string {
+	return strings.Split(data, " ")[1]
+}
+
 func main() {
 	fmt.Println("Logs from your program will appear here!")
 
@@ -61,15 +71,19 @@ func main() {
 		log.Fatalln("Error reading connection: ", err.Error())
 	}
 
+	var requestHeaders RequestHeaders
 	splitted := strings.Split(string(headers), "\r\n")
-	startLinestr := splitted[0]
-	startLine := parseStartline(startLinestr)
+	requestHeaders.StartLine = parseStartline(splitted[0])
+	requestHeaders.UserAgent = parseUserAgent(splitted[2])
 
-	if startLine.Path == "/" {
+	if requestHeaders.StartLine.Path == "/" {
 		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	} else if strings.Contains(startLine.Path, "echo") {
-		echo := strings.Split(startLine.Path, "/echo/")[1:][0]
+	} else if strings.Contains(requestHeaders.StartLine.Path, "echo") {
+		echo := strings.Split(requestHeaders.StartLine.Path, "/echo/")[1:][0]
 		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(echo), echo)
+		_, err = conn.Write([]byte(res))
+	} else if requestHeaders.StartLine.Path == "/user-agent" {
+		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(requestHeaders.UserAgent), requestHeaders.UserAgent)
 		_, err = conn.Write([]byte(res))
 	} else {
 		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
