@@ -39,7 +39,7 @@ func parseStartline(data string) StartLine {
 	sep := strings.Split(data, " ")
 	method, err := MethodString(sep[0])
 	if err != nil {
-		log.Fatalln("Error parsing HTTP method:", err)
+		log.Fatalln("Error parsing HTTP method:", err.Error())
 	}
 
 	return StartLine{
@@ -60,19 +60,17 @@ func checkFileExists(dir, filename string) bool {
 	_, err := os.Stat(dir)
 	if os.IsNotExist(err) {
 		return false
-		// log.Fatalln("Folder does not exist.")
 	}
 
 	// assuming dir ends in /
 	_, err = os.Stat(dir + filename)
-	// fmt.Println("exists or not:", os.IsNotExist(err), dir+filename)
 	return !os.IsNotExist(err)
 }
 
 func readFile(dir, filename string) string {
 	content, err := os.ReadFile(dir + filename)
 	if err != nil {
-		log.Fatalln("Err:", err.Error())
+		log.Fatalln("Err reading file:", err.Error())
 	}
 
 	return string(content)
@@ -122,6 +120,26 @@ func writeFile(data []byte, path string) {
 	log.Printf("Copied %v bytes\n", n)
 }
 
+func dataResponse(content string) string {
+	return fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(content), content)
+}
+
+func okResponse() string {
+	return "HTTP/1.1 200 OK\r\n\r\n"
+}
+
+func streamResponse(data string) string {
+	return fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(data), data)
+}
+
+func notFoundResponse() string {
+	return "HTTP/1.1 404 Not Found\r\n\r\n"
+}
+
+func createdResponse() string {
+	return "HTTP/1.1 201 Created\r\n\r\n"
+}
+
 func handleRequest(conn net.Conn, dir string) {
 	defer conn.Close()
 
@@ -140,16 +158,17 @@ func handleRequest(conn net.Conn, dir string) {
 	request.StartLine = parseStartline(splitted[0])
 	request.UserAgent = parseUserAgent(splitted[2])
 
-	if request.StartLine.Path == "/" {
-		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	} else if strings.Contains(request.StartLine.Path, "echo") {
+	switch {
+	case request.StartLine.Path == "/":
+		_, err = conn.Write([]byte(okResponse()))
+	case request.StartLine.Path == "/user-agent":
+		res := dataResponse(request.UserAgent)
+		_, err = conn.Write([]byte(res))
+	case strings.Contains(request.StartLine.Path, "echo"):
 		echo := strings.Split(request.StartLine.Path, "/echo/")[1:][0]
-		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(echo), echo)
+		res := dataResponse(echo)
 		_, err = conn.Write([]byte(res))
-	} else if request.StartLine.Path == "/user-agent" {
-		res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %v\r\n\r\n%v", len(request.UserAgent), request.UserAgent)
-		_, err = conn.Write([]byte(res))
-	} else if strings.Contains(request.StartLine.Path, "/files/") {
+	case strings.Contains(request.StartLine.Path, "/files"):
 		if dir == "" {
 			log.Fatalf("Give up dir!")
 		}
@@ -161,22 +180,20 @@ func handleRequest(conn net.Conn, dir string) {
 		if request.StartLine.Method == GET {
 			if checkFileExists(dir, filename) {
 				filecontent := readFile(dir, filename)
-				res := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %v\r\n\r\n%v", len(filecontent), filecontent)
+				res := streamResponse(filecontent)
 				_, err = conn.Write([]byte(res))
 			} else {
-				_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+				_, err = conn.Write([]byte(notFoundResponse()))
 			}
 		} else if request.StartLine.Method == POST {
 			request.ContentLength = getContentLength(splitted)
 			request.Body = parseBody(splitted[len(splitted)-1], request.ContentLength)
 			// save this content to file ...
 			writeFile(request.Body, dir+filename)
-			res := "HTTP/1.1 201 Created\r\n\r\n"
-			fmt.Println(res)
-			_, err = conn.Write([]byte(res))
+			_, err = conn.Write([]byte(createdResponse()))
 		}
-	} else {
-		_, err = conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+	default:
+		_, err = conn.Write([]byte(notFoundResponse()))
 	}
 
 	if err != nil {
@@ -193,7 +210,7 @@ func main() {
 	}
 	defer l.Close()
 
-	dir := flag.String("directory", "", "help message for flag n")
+	dir := flag.String("directory", "", "enter directory to save files to")
 	flag.Parse()
 
 	for {
@@ -204,5 +221,4 @@ func main() {
 
 		go handleRequest(conn, *dir)
 	}
-
 }
